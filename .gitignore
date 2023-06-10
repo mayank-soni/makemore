@@ -1,2 +1,12 @@
 data/
 models/
+
+# Packaging
+*.egg-info/
+*.egg
+
+# Byte-compiled
+__pycache__/
+
+# VS code
+.vscode/
