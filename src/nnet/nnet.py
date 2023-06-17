@@ -33,7 +33,7 @@ class BigramNnet(torch.nn.Module):
 
     def create_bigram_tensors(self, names: list[str]) -> tuple[torch.Tensor]:
         x, y = [], []
-        bigrams = BigramModel.create_bigram_list(names)
+        bigrams = BigramModel.create_bigrams(names)
         for bigram in bigrams:
             x.append(self.bigram.char2index[bigram[0]])
             y.append(self.bigram.char2index[bigram[1]])

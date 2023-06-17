@@ -28,7 +28,7 @@ class BigramModel:
     def get_chars(self) -> list[str]:
         """Starts with lowercase English letters, adds any other characters in names"""
         self.chars = BigramModel.chars
-        for name in self.names.data:
+        for name in self.names.data.keys():
             for char in name:
                 if char not in self.chars:
                     self.chars.append(char)
@@ -53,58 +53,61 @@ class BigramModel:
             axis=1, keepdims=True
         )
 
-    def create_bigram_array(self, names: list[str]) -> torch.Tensor:
+    def create_bigram_array(self, names: dict[str, int]) -> torch.Tensor:
         """Creates bigram array from list of names.
         In effect, counts number of times each character appears after another and stores counts in a matrix.
         Rows are first character, columns are second character.
         Last row/column are for start/end of word.
         """
         # Initialise bigram array to zeros. Add one row/column to account for start/end of word
-        bigram_array = torch.zeros(len(self.chars), len(self.chars), dtype=torch.int64)
-        for ch1, ch2 in BigramModel.create_bigram_list(names):
-            bigram_array[self.char2index[ch1]][self.char2index[ch2]] += 1
+        bigram_array = torch.zeros(len(self.chars), len(self.chars))
+        for (ch1, ch2), count in BigramModel.create_bigrams(names).items():
+            bigram_array[self.char2index[ch1]][self.char2index[ch2]] += count
         return bigram_array
 
     @classmethod
-    def create_bigram_list(cls, names: list[str]) -> list[tuple[str, str]]:
+    def create_bigrams(cls, names: dict[str, int]) -> dict[tuple[str, str], int]:
         """Creates list of bigrams from list of names.
         Start/end of word is represented by None.
         """
-        bigrams = []
-        for name in names:
+        bigrams = {}
+        for name, count in names.items():
             name = [BigramModel.ends] + list(name) + [BigramModel.ends]
             for ch1, ch2 in zip(name, name[1:]):
-                bigrams.append((ch1, ch2))
+                if (ch1, ch2) in bigrams:
+                    bigrams[(ch1, ch2)] += count
+                else:
+                    bigrams[(ch1, ch2)] = count
         return bigrams
 
-    def visualise(self):
-        """Visualises bigram array as a heatmap"""
-        plt.figure(figsize=(16, 16))
-        plt.imshow(self.bigram_array, cmap="Blues")
-        for i in range(self.bigram_array.shape[0]):
-            for j in range(self.bigram_array.shape[1]):
-                first = self.index2char[i]
-                # Shorten start/end of word to 'S'/'E' for readability
-                if first == BigramModel.ends:
-                    first = "S"
-                second = self.index2char[j]
-                if second == BigramModel.ends:
-                    second = "E"
-                chars = first + second
-                # Need parsemath=False to avoid error with '$$'
-                plt.text(
-                    j, i, chars, ha="center", va="top", color="gray", parse_math=False
-                )
-                plt.text(
-                    j,
-                    i,
-                    self.bigram_array[i, j].item(),
-                    ha="center",
-                    va="bottom",
-                    color="red",
-                )
-        plt.xlabel("Second Character")
-        plt.ylabel("First Character")
+    # def visualise(self):
+    #     """Visualises bigram array as a heatmap"""
+    #     plt.figure(figsize=(16, 16))
+    #     plt.imshow(self.bigram_array, cmap="Blues")
+    #     for i in range(self.bigram_array.shape[0]):
+    #         for j in range(self.bigram_array.shape[1]):
+    #             first = self.index2char[i]
+    #             # Shorten start/end of word to 'S'/'E' for readability
+    #             if first == BigramModel.ends:
+    #                 first = "S"
+    #             second = self.index2char[j]
+    #             if second == BigramModel.ends:
+    #                 second = "E"
+    #             chars = first + second
+    #             # Need parsemath=False to avoid error with '$$'
+    #             plt.text(
+    #                 j, i, chars, ha="center", va="top", color="gray", parse_math=False
+    #             )
+    #             plt.text(
+    #                 j,
+    #                 i,
+    #                 f"{self.bigram_array[i, j].item():.1g}",
+    #                 ha="center",
+    #                 va="bottom",
+    #                 color="red",
+    #             )
+    #     plt.xlabel("Second Character")
+    #     plt.ylabel("First Character")
 
     def predict_next(self, index: int, generator: torch._C.Generator) -> int:
         """Predicts next character given current character.
