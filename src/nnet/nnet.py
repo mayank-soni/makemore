@@ -4,7 +4,7 @@ from src.config import DEFAULT_CHARS
 
 
 class BigramNnet(torch.nn.Module):
-    def __init__(self, layer_sizes: list[int], alpha: float = 0):
+    def __init__(self, layer_sizes: list[int], reg: float = 0):
         super().__init__()
         self.x = torch.Tensor
         self.y = torch.Tensor
@@ -16,7 +16,7 @@ class BigramNnet(torch.nn.Module):
         self.test_weights = torch.Tensor
         self.weights = torch.Tensor
         # L2 regularisation term
-        self.alpha = alpha
+        self.reg = reg
         generator = torch.Generator().manual_seed(36)
         self._layer_sizes = list[int]
         self.layer_sizes = layer_sizes
@@ -66,16 +66,17 @@ class BigramNnet(torch.nn.Module):
         loss = -torch.log(prob_correct)
         # Averaged over batch, weighted by counts
         loss = torch.sum(loss * weights) / weights.sum()
-        # L2 regularisation
-        if self.alpha == 0:
-            reg = 0
+        # L2 regularisation. reg * average of squared weights from all layers
+        if self.reg == 0:
+            reg_loss = 0
         else:
-            reg = (
-                self.alpha
-                / 2
+            # L2 regularisation i.e.
+            reg_loss = (
+                self.reg
                 * sum(torch.sum(layer**2).item() for layer in self.layers.values())
+                / sum(torch.numel(layer) for layer in self.layers.values())
             )
-        return loss + reg
+        return loss + reg_loss
 
     def train(
         self,
