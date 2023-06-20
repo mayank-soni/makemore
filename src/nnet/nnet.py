@@ -1,65 +1,151 @@
 import torch
 
-from src.bigram.bigram import BigramModel
-from src.data.names import Names
+from src.config import DEFAULT_CHARS
 
 
 class BigramNnet(torch.nn.Module):
-    def __init__(self, names: Names, reg: float = 0.1):
+    def __init__(self, layer_sizes: list[int], alpha: float = 0):
         super().__init__()
-        self.names = names
-        self.bigram = BigramModel(self.names)
-        self.x_train, self.y_train, self.x_test, self.y_test = (
-            torch.Tensor,
-            torch.Tensor,
-            torch.Tensor,
-            torch.Tensor,
-        )
-        # n_neurons needs to be the same as the number of potential output characters
-        self.n_neurons = len(self.bigram.chars)
-        # One-hot encoding of characters (embedding size = number of characters)
-        self.n_embedding = len(self.bigram.chars)
-        # Single hidden layer which is also the output layer. No biases, just weights
-        self.layer = torch.randn(
-            (self.n_embedding, self.n_neurons),
-            generator=torch.Generator().manual_seed(36),
-            requires_grad=True,
-        )
-        self.reg = reg
+        self.x = torch.Tensor
+        self.y = torch.Tensor
+        self.x_train = torch.Tensor
+        self.y_train = torch.Tensor
+        self.x_test = torch.Tensor
+        self.y_test = torch.Tensor
+        self.train_weights = torch.Tensor
+        self.test_weights = torch.Tensor
+        self.weights = torch.Tensor
+        # L2 regularisation term
+        self.alpha = alpha
+        generator = torch.Generator().manual_seed(36)
+        self._layer_sizes = list[int]
+        self.layer_sizes = layer_sizes
+        self.layers = {
+            f"W{i}": torch.randn(
+                layer_sizes[i],
+                layer_sizes[i + 1],
+                generator=generator,
+                requires_grad=True,
+            )
+            for i in range(len(layer_sizes) - 1)
+        }
+        self.loss_history = {"train": [], "test": []}
 
-    def get_data(self):
-        self.x_train, self.y_train = self.create_bigram_tensors(self.names.train)
-        self.x_test, self.y_test = self.create_bigram_tensors(self.names.test)
+    @property
+    def layer_sizes(self) -> list[int]:
+        return self._layer_sizes
 
-    def create_bigram_tensors(self, names: list[str]) -> tuple[torch.Tensor]:
-        x, y = [], []
-        bigrams = BigramModel.create_bigrams(names)
-        for bigram in bigrams:
-            x.append(self.bigram.char2index[bigram[0]])
-            y.append(self.bigram.char2index[bigram[1]])
-        x = torch.tensor(x, dtype=torch.int64)
-        x_enc = torch.nn.functional.one_hot(
-            x, num_classes=len(self.bigram.chars)
-        ).float()
-        y = torch.tensor(y, dtype=torch.int64)
-        return x_enc, y
+    @layer_sizes.setter
+    def layer_sizes(self, layer_sizes: list[int]) -> None:
+        if layer_sizes[0] != len(DEFAULT_CHARS):
+            raise ValueError(
+                f"First layer must be size {len(DEFAULT_CHARS)} for one-hot encoding"
+            )
+        if layer_sizes[-1] != len(DEFAULT_CHARS):
+            raise ValueError(
+                f"Last layer must be size {len(DEFAULT_CHARS)} for softmax"
+            )
+        self._layer_sizes = layer_sizes
 
-    def forward(self, x):
-        """Forward pass of a single layer."""
-        # Neuron activations
-        # n_samples x n_neurons = (n_samples x n_embedding) @ (n_embedding x n_neurons)
-        output = x @ self.layer
-        # Softmax for probs
-        probs = torch.softmax(output, dim=1)
-        return probs
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass of neural network. Returns probabilities of each character in vocabulary"""
+        # Embedding via one-hot encoding. Input shape: (batch_size). Output shape: (batch_size, layer_sizes[0])
+        x = torch.nn.functional.one_hot(x, num_classes=self.layer_sizes[0]).float()
+        # Linear layer(s). Output shape for each: (batch_size, layer_size)
+        for layer in self.layers.values():
+            x = x @ layer
+        return torch.softmax(x, dim=1)
 
-    def loss(self, probs, y_true):
-        # CCE Loss
+    def loss(
+        self, probs: torch.Tensor, y: torch.Tensor, weights: torch.Tensor
+    ) -> torch.Tensor:
         # Extract probabilities for correct characters (i.e. each character in y)
         # for each row (each value in the arange), extract the yth value
-        prob_correct = probs[torch.arange(len(y_true)), y_true]
-        # log the probs and take the negative and mean. Add L2 regularisation
-        loss = (-1 * torch.log(prob_correct).sum() / len(y_true)) + (
-            self.reg * torch.sum(self.layer**2)
-        )
-        return loss
+        prob_correct = probs[torch.arange(len(y)), y]
+        # Negative log likelihood loss
+        loss = -torch.log(prob_correct)
+        # Averaged over batch, weighted by counts
+        loss = torch.sum(loss * weights) / weights.sum()
+        # L2 regularisation
+        if self.alpha == 0:
+            reg = 0
+        else:
+            reg = (
+                self.alpha
+                / 2
+                * sum(torch.sum(layer**2).item() for layer in self.layers.values())
+            )
+        return loss + reg
+
+    def train(
+        self,
+        x: torch.Tensor,
+        y: torch.Tensor,
+        weights: torch.Tensor,
+        epochs: int,
+        lr: float,
+        val_x: torch.Tensor = None,
+        val_y: torch.Tensor = None,
+        val_weights: torch.Tensor = None,
+        reporting_freq: int = None,
+    ):
+        for i in range(epochs):
+            # Reset gradients
+            for layer in self.layers.values():
+                layer.grad = None
+            # Forward pass
+            probs = self.forward(x)
+            # Calculate loss
+            train_loss = self.loss(probs, y, weights)
+            self.loss_history["train"].append(train_loss.item())
+            if val_x is not None and val_y is not None and val_weights is not None:
+                val_loss = self.evaluate(val_x, val_y, val_weights)
+                self.loss_history["test"].append(val_loss)
+            # Backpropagation
+            train_loss.backward()
+            # Update weights
+            with torch.no_grad():
+                for layer in self.layers.values():
+                    layer -= lr * layer.grad
+            if reporting_freq == None:
+                reporting_freq = epochs // 10
+            if i % reporting_freq == 0:
+                print(f"Epoch {i}: Train loss = {train_loss.item()}")
+                try:
+                    print(f"Val loss = {val_loss}")
+                except NameError:
+                    pass
+
+    def evaluate(self, x, y, weights):
+        with torch.no_grad():
+            probs = self.forward(x)
+            loss = self.loss(probs, y, weights)
+        return loss.item()
+
+    def generate(
+        self,
+        mapping_i2c: dict[int, str],
+        ends_index: int,
+        max_length: int = None,
+        generator: torch._C.Generator = None,
+    ) -> str:
+        word_indices = [ends_index]
+        while True:
+            next_index = self.predict_next(word_indices[-1], generator)
+            if next_index == ends_index:
+                break
+            word_indices.append(next_index)
+            if max_length and len(word_indices) > max_length:
+                break
+        # Convert indices to characters, join up, and return
+        return "".join([mapping_i2c[i] for i in word_indices[1:]])
+
+    def predict_next(self, index: int, generator: torch._C.Generator = None) -> int:
+        with torch.no_grad():
+            output_probs = self.forward(torch.tensor(index).unsqueeze(0))
+        if generator:
+            prediction = torch.multinomial(output_probs, 1, generator=generator).item()
+        else:
+            # If no generator, use default random number generator
+            prediction = torch.multinomial(output_probs, 1).item()
+        return prediction
