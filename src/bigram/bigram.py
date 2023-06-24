@@ -1,6 +1,6 @@
 from collections import Counter
 
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 import torch
 
 from src.config import ENDS
@@ -61,7 +61,7 @@ class BigramModel:
         return index2char, char2index
 
     def predict(
-        self, generator: torch._C.Generator = None, max_length: int = None
+        self, generator: torch._C.Generator = None, max_length: int = -1
     ) -> str:
         """Generates a name from the model.
         Args:
@@ -78,7 +78,7 @@ class BigramModel:
             if next_index == ends_index:
                 break
             word_indices.append(next_index)
-            if max_length and len(word_indices) > max_length:
+            if max_length >= 0 and len(word_indices) > max_length:
                 break
         # Convert indices to characters, join up, and return
         return "".join([self.index2char[i] for i in word_indices[1:]])

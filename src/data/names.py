@@ -31,11 +31,11 @@ class Names:
         self.weights_test = torch.Tensor
 
     @classmethod
-    def from_file(cls, file_path: pathlib.Path, counts: bool = False) -> None:
+    def from_file(cls, file_path: pathlib.Path, counts: bool = False) -> "Names":
         """Reads data from file. Allows for counts to be read in as well as names."""
         names = cls()
         names.file_path = file_path
-        data = Counter()
+        data: Counter[str] = Counter()
         with open(file_path) as f:
             if counts:
                 for line in f:
@@ -47,7 +47,7 @@ class Names:
         return names
 
     @classmethod
-    def from_list(cls, namelist: list[str]) -> None:
+    def from_list(cls, namelist: list[str]) -> "Names":
         """Creates data from list of names"""
         names = cls()
         data = {name.strip().lower(): 1 for name in namelist}
@@ -55,7 +55,7 @@ class Names:
         return names
 
     @classmethod
-    def from_dict(cls, namedict: dict[str, int]) -> None:
+    def from_dict(cls, namedict: dict[str, int]) -> "Names":
         """Creates data from dict of names and counts"""
         names = cls()
         names.data = Counter(namedict)
@@ -87,21 +87,24 @@ class Names:
                 self.test.update({name: count})
 
     @classmethod
-    def to_bigrams(self, data: Counter[str] = None) -> Counter[tuple[str, str]]:
+    def to_bigrams(cls, data: Counter[str]) -> Counter[tuple[str, str]]:
         """Creates datasets (train, test, total) of bigrams.
         Start/end of word is represented by ENDS.
         If data is passed, uses it instead and returns only one dataset.
         """
-        bigrams = Counter()
+        bigrams: Counter[tuple[str, str]] = Counter()
         for name, count in data.items():
-            name = [ENDS] + list(name) + [ENDS]
-            bigrams.update({(ch1, ch2): count for ch1, ch2 in zip(name, name[1:])})
+            name_list = [ENDS] + list(name) + [ENDS]
+            bigrams.update(
+                {(ch1, ch2): count for ch1, ch2 in zip(name_list, name_list[1:])}
+            )
         return bigrams
 
     @classmethod
     def to_bigram_tensor(
-        self, bigrams: Counter[tuple[str, str]], mapping: dict[str, int]
+        cls, bigrams: Counter[tuple[str, str]], mapping: dict[str, int]
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Converts bigrams to tensors for use in neural network."""
         x, y, weight = [], [], []
         for bigram, count in bigrams.items():
             x.append(mapping[bigram[0]])
@@ -111,6 +114,27 @@ class Names:
         y = torch.tensor(y, dtype=torch.int64)
         weight = torch.tensor(weight, dtype=torch.int64)
         return x, y, weight
+
+    @classmethod
+    def to_ngram_tensor(
+        cls, data: Counter[str], n: int, mapping: dict[str, int]
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        ngrams: Counter = Counter()
+        x, y, weight = [], [], []
+        for name, count in data.items():
+            name_list = [ENDS] * n + list(name) + [ENDS]
+            tokenised = [mapping[char] for char in name_list]
+            for i in range(len(tokenised) - n):
+                ngrams.update({tuple(tokenised[i : i + n + 1]): count})
+        for ngram, count in ngrams.items():
+            x.append(list(ngram[:n]))
+            y.append(ngram[n])
+            weight.append(count)
+        return (
+            torch.tensor(x, dtype=torch.int64),
+            torch.tensor(y, dtype=torch.int64),
+            torch.tensor(weight, dtype=torch.int64),
+        )
 
     def eda(self):
         """EDA on data"""
